@@ -60,6 +60,8 @@
 #define OPENSSL_32_BIT
 #elif defined(__s390x__)
 #define OPENSSL_64_BIT
+#elif defined(__e2k__)
+#define OPENSSL_64_BIT
 #else
 #error "Unknown target CPU"
 #endif
