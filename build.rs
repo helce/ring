@@ -128,6 +128,8 @@ fn cpp_flags(compiler: &cc::Tool) -> &'static [&'static str] {
             "-Wstrict-prototypes",
             "-Wundef",
             "-Wuninitialized",
+            "-Wno-error=conversion",
+            "-Wno-error=reduced-alignment",
         ];
         NON_MSVC_FLAGS
     } else {
