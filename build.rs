@@ -128,8 +128,6 @@ fn cpp_flags(compiler: &cc::Tool) -> &'static [&'static str] {
             "-Wstrict-prototypes",
             "-Wundef",
             "-Wuninitialized",
-            "-Wno-error=conversion",
-            "-Wno-error=reduced-alignment",
         ];
         NON_MSVC_FLAGS
     } else {
@@ -583,6 +581,11 @@ fn configure_cc(c: &mut cc::Build, target: &Target, include_dir: &Path) {
     let _ = c.include(include_dir);
     for f in cpp_flags(&compiler) {
         let _ = c.flag(f);
+    }
+
+    if compiler.is_like_mcst_lcc() {
+        let _ = c.flag("-Wno-error=reduced-alignment");
+        let _ = c.remove_flag("-Wconversion");
     }
 
     if target.os.as_str() == MACOS {
