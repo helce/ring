@@ -21,6 +21,7 @@ rustflags_self_contained="-Clink-self-contained=yes -Clinker=rust-lld"
 qemu_aarch64="qemu-aarch64 -L /usr/aarch64-linux-gnu"
 qemu_arm_gnueabi="qemu-arm -L /usr/arm-linux-gnueabi"
 qemu_arm_gnueabihf="qemu-arm -L /usr/arm-linux-gnueabihf"
+qemu_loongarch64="qemu-loongarch64 -L /usr/loongarch64-linux-gnu"
 qemu_mips="qemu-mips -L /usr/mips-linux-gnu"
 qemu_mips64="qemu-mips64 -L /usr/mips64-linux-gnuabi64"
 qemu_mips64el="qemu-mips64el -L /usr/mips64el-linux-gnuabi64"
@@ -30,13 +31,16 @@ qemu_powerpc64="qemu-ppc64 -L /usr/powerpc64-linux-gnu"
 qemu_powerpc64le="qemu-ppc64le -L /usr/powerpc64le-linux-gnu"
 qemu_riscv64="qemu-riscv64 -L /usr/riscv64-linux-gnu"
 qemu_s390x="qemu-s390x -L /usr/s390x-linux-gnu"
+qemu_sparc64="qemu-sparc64 -L /usr/sparc64-linux-gnu"
+qemu_x86="qemu-i386"
+qemu_x86_64="qemu-x86_64"
 
 # Avoid putting the Android tools in `$PATH` because there are tools in this
 # directory like `clang` that would conflict with the same-named tools that may
 # be needed to compile the build script, or to compile for other targets.
 if [ -n "${ANDROID_HOME-}" ]; then
   # Keep the next line in sync with the corresponding line in install-build-tools.sh.
-  ndk_version=25.2.9519653
+  ndk_version=27.1.12297006
   ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT:-${ANDROID_HOME}/ndk/$ndk_version}
 fi
 if [ -n "${ANDROID_NDK_ROOT-}" ]; then
@@ -48,30 +52,32 @@ for arg in $*; do
     --target=*)
       target=${arg#*=}
       ;;
+    +*)
+      toolchain=${arg#*+}
+      ;;
     *)
       ;;
   esac
 done
 
 # See comments in install-build-tools.sh.
-llvm_version=16
+llvm_version=19
 
+use_clang=
 case $target in
    aarch64-linux-android)
     export CC_aarch64_linux_android=$android_tools/aarch64-linux-android21-clang
     export AR_aarch64_linux_android=$android_tools/llvm-ar
-    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$android_tools/aarch64-linux-android21-clang
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC_aarch64_linux_android
     ;;
   aarch64-unknown-linux-gnu)
-    export CC_aarch64_unknown_linux_gnu=clang-$llvm_version
-    export AR_aarch64_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=/usr/aarch64-linux-gnu"
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="$qemu_aarch64"
     ;;
   aarch64-unknown-linux-musl)
-    export CC_aarch64_unknown_linux_musl=clang-$llvm_version
-    export AR_aarch64_unknown_linux_musl=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="$rustflags_self_contained"
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUNNER="$qemu_aarch64"
     ;;
@@ -89,9 +95,13 @@ case $target in
     export CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUNNER="$qemu_arm_gnueabihf"
     ;;
   armv7-linux-androideabi)
-    export CC_armv7_linux_androideabi=$android_tools/armv7a-linux-androideabi19-clang
+    # https://github.com/android/ndk/wiki/Changelog-r26#announcements says API
+    # level 21 is the minimum supported as of NDK 26, even though we'd like to
+    # support API level 19. Rust 1.82 is doing the same; see
+    # https://github.com/rust-lang/rust/commit/6ef11b81c2c02c3c4b7556d1991a98572fe9af87.
+    export CC_armv7_linux_androideabi=$android_tools/armv7a-linux-androideabi21-clang
     export AR_armv7_linux_androideabi=$android_tools/llvm-ar
-    export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$android_tools/armv7a-linux-androideabi19-clang
+    export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$CC_armv7_linux_androideabi
     ;;
   armv7-unknown-linux-gnueabihf)
     export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc
@@ -100,19 +110,19 @@ case $target in
     export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUNNER="$qemu_arm_gnueabihf"
     ;;
   armv7-unknown-linux-musleabihf)
-    export CC_armv7_unknown_linux_musleabihf=clang-$llvm_version
-    export AR_armv7_unknown_linux_musleabihf=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="$rustflags_self_contained"
     export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER="$qemu_arm_gnueabihf"
     ;;
   i686-unknown-linux-gnu)
-    export CC_i686_unknown_linux_gnu=clang-$llvm_version
-    export AR_i686_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=clang-$llvm_version
+    if [ -n "${RING_CPU_MODEL-}" ]; then
+      export CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="$qemu_x86 -cpu ${RING_CPU_MODEL}"
+    fi
     ;;
   i686-unknown-linux-musl)
-    export CC_i686_unknown_linux_musl=clang-$llvm_version
-    export AR_i686_unknown_linux_musl=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_I686_UNKNOWN_LINUX_MUSL_RUSTFLAGS="$rustflags_self_contained"
     ;;
   mips-unknown-linux-gnu)
@@ -140,45 +150,49 @@ case $target in
     export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUNNER="$qemu_mipsel"
     ;;
   powerpc-unknown-linux-gnu)
-    export CC_powerpc_unknown_linux_gnu=clang-$llvm_version
-    export AR_powerpc_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CFLAGS_powerpc_unknown_linux_gnu="--sysroot=/usr/powerpc-linux-gnu"
     export CARGO_TARGET_POWERPC_UNKNOWN_LINUX_GNU_LINKER=powerpc-linux-gnu-gcc
     export CARGO_TARGET_POWERPC_UNKNOWN_LINUX_GNU_RUNNER="$qemu_powerpc"
     ;;
   powerpc64-unknown-linux-gnu)
-    export CC_powerpc64_unknown_linux_gnu=clang-$llvm_version
-    export AR_powerpc64_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CFLAGS_powerpc64_unknown_linux_gnu="--sysroot=/usr/powerpc64-linux-gnu"
     export CARGO_TARGET_POWERPC64_UNKNOWN_LINUX_GNU_LINKER=powerpc64-linux-gnu-gcc
     export CARGO_TARGET_POWERPC64_UNKNOWN_LINUX_GNU_RUNNER="$qemu_powerpc64"
     ;;
   powerpc64le-unknown-linux-gnu)
-    export CC_powerpc64le_unknown_linux_gnu=clang-$llvm_version
-    export AR_powerpc64le_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CFLAGS_powerpc64le_unknown_linux_gnu="--sysroot=/usr/powerpc64le-linux-gnu"
     export CARGO_TARGET_POWERPC64LE_UNKNOWN_LINUX_GNU_LINKER=powerpc64le-linux-gnu-gcc
     export CARGO_TARGET_POWERPC64LE_UNKNOWN_LINUX_GNU_RUNNER="$qemu_powerpc64le"
     ;;
   riscv64gc-unknown-linux-gnu)
-    export CC_riscv64gc_unknown_linux_gnu=clang-$llvm_version
-    export AR_riscv64gc_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc
     export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUNNER="$qemu_riscv64"
     ;;
   s390x-unknown-linux-gnu)
-    export CC_s390x_unknown_linux_gnu=clang-$llvm_version
-    export AR_s390x_unknown_linux_gnu=llvm-ar-$llvm_version
+    use_clang=1
     # XXX: Using -march=zEC12 to work around a z13 instruction bug in
     # QEMU 8.0.2 and earlier that causes `test_constant_time` to fail
     # (https://lists.gnu.org/archive/html/qemu-devel/2023-05/msg06965.html).
-    export CFLAGS_s390x_unknown_linux_gnu="--sysroot=/usr/s390x-linux-gnu -march=zEC12"
+    export CFLAGS_s390x_unknown_linux_gnu="--sysroot=/usr/s390x-linux-gnu"
     export CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_LINKER=s390x-linux-gnu-gcc
     export CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUNNER="$qemu_s390x"
     ;;
+  sparc64-unknown-linux-gnu)
+    export CFLAGS_sparc64_unknown_linux_gnu="--sysroot=/usr/sparc64-linux-gnu"
+    export CARGO_TARGET_SPARC64_UNKNOWN_LINUX_GNU_LINKER=sparc64-linux-gnu-gcc
+    export CARGO_TARGET_SPARC64_UNKNOWN_LINUX_GNU_RUNNER="$qemu_sparc64"
+    ;;
+  x86_64-unknown-linux-gnu)
+    if [ -n "${RING_CPU_MODEL-}" ]; then
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$qemu_x86_64 -cpu ${RING_CPU_MODEL}"
+    fi
+    ;;
   x86_64-unknown-linux-musl)
-    export CC_x86_64_unknown_linux_musl=clang-$llvm_version
-    export AR_x86_64_unknown_linux_musl=llvm-ar-$llvm_version
+    use_clang=1
     # XXX: Work around https://github.com/rust-lang/rust/issues/79555.
     if [ -n "${RING_COVERAGE-}" ]; then
       export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang-$llvm_version
@@ -187,26 +201,42 @@ case $target in
     fi
     ;;
   loongarch64-unknown-linux-gnu)
-    export CC_loongarch64_unknown_linux_gnu=clang-$llvm_version
-    export AR_loongarch64_unknown_linux_gnu=llvm-ar-$llvm_version
-    export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=clang-$llvm_version
+    use_clang=1
+    export CC_loongarch64_unknown_linux_gnu=loongarch64-linux-gnu-gcc-14
+    export AR_loongarch64_unknown_linux_gnu=loongarch64-linux-gnu-gcc-ar
+    export CFLAGS_loongarch64_unknown_linux_gnu="--sysroot=/usr/loongarch64-linux-gnu"
+    export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=loongarch64-linux-gnu-gcc-14
+    export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_RUNNER="$qemu_loongarch64"
+    ;;
+  loongarch64-unknown-linux-musl)
+    use_clang=1
+    export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Ctarget-feature=+crt-static $rustflags_self_contained"
+    export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_MUSL_RUNNER="$qemu_loongarch64"
     ;;
   wasm32-unknown-unknown)
     # The first two are only needed for when the "wasm_c" feature is enabled.
-    export CC_wasm32_unknown_unknown=clang-$llvm_version
-    export AR_wasm32_unknown_unknown=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
     export WASM_BINDGEN_TEST_TIMEOUT=60
     ;;
   wasm32-wasi)
-    # The first two are only needed for when the "wasm_c" feature is enabled.
-    export CC_wasm32_wasi=clang-$llvm_version
-    export AR_wasm32_wasi=llvm-ar-$llvm_version
+    use_clang=1
     export CARGO_TARGET_WASM32_WASI_RUNNER=target/tools/linux-x86_64/wasmtime/wasmtime
+    ;;
+  wasm32-wasip1)
+    use_clang=1
+    export CARGO_TARGET_WASM32_WASIP1_RUNNER=target/tools/linux-x86_64/wasmtime/wasmtime
+    ;;
+  wasm32-wasip2)
+    use_clang=1
+    export CARGO_TARGET_WASM32_WASIP2_RUNNER=target/tools/linux-x86_64/wasmtime/wasmtime
     ;;
   *)
     ;;
 esac
+
+# ${target} with hyphens replaced by underscores.
+target_lower=${target//-/_}
 
 if [ -n "${RING_COVERAGE-}" ]; then
   # XXX: Collides between release and debug.
@@ -215,34 +245,63 @@ if [ -n "${RING_COVERAGE-}" ]; then
   rm -f "$coverage_dir/*.profraw"
 
   export RING_BUILD_EXECUTABLE_LIST="$coverage_dir/executables"
-  truncate --size=0 "$RING_BUILD_EXECUTABLE_LIST"
+  # Create/truncate the file.
+  : > "$RING_BUILD_EXECUTABLE_LIST"
 
   # This doesn't work when profiling under QEMU. Instead mk/runner does
   # something similar but different.
   # export LLVM_PROFILE_FILE="$coverage_dir/%m.profraw"
 
-  # ${target} with hyphens replaced by underscores, lowercase and uppercase.
-  target_lower=${target//-/_}
-  target_upper=${target_lower^^}
+  target_upper=$(echo ${target_lower} | tr '[:lower:]' '[:upper:]')
 
-  cflags_var=CFLAGS_${target_lower}
-  declare -x "${cflags_var}=-fprofile-instr-generate -fcoverage-mapping ${!cflags_var-}"
+  case "$OSTYPE" in
+    linux*)
+      use_clang=1
+      cflags_var=CFLAGS_${target_lower}
+      declare -x "${cflags_var}=-fprofile-instr-generate -fcoverage-mapping ${!cflags_var-}"
+      ;;
+    darwin*)
+      # XXX: Don't collect code coverage for C because the installed version of Apple Clang
+      # doesn't necessarily have the same code coverage format as the Rust toolchain.
+      # TODO: Support "use_clang=1" for Apple targets and enable C code coverage.
+      # We don't have any Apple-specific C code, so this shouldn't matter much.
+      ;;
+  esac
+
+  additional_rustflags=""
+  case "$target" in
+    powerpc-unknown-linux-gnu)
+      additional_rustflags="-latomic"
+    ;;
+  esac
 
   runner_var=CARGO_TARGET_${target_upper}_RUNNER
   declare -x "${runner_var}=mk/runner ${!runner_var-}"
 
   rustflags_var=CARGO_TARGET_${target_upper}_RUSTFLAGS
-  declare -x "${rustflags_var}=-Cinstrument-coverage ${!rustflags_var-}"
+  declare -x "${rustflags_var}=${additional_rustflags} -Cinstrument-coverage ${!rustflags_var-} -Z coverage-options=branch"
+fi
+
+if [ -n "${use_clang}" ]; then
+  cc_var=CC_${target_lower}
+  declare -x "${cc_var}=clang-${llvm_version}"
+
+  ar_var=AR_${target_lower}
+  declare -x "${ar_var}=llvm-ar-${llvm_version}"
 fi
 
 cargo "$@"
 
 if [ -n "${RING_COVERAGE-}" ]; then
+  # Keep in sync with check-symbol-prefixes.sh.
+  # Use the host target-libdir, not the target target-libdir.
+  llvm_root="$(rustc +${toolchain} --print target-libdir)/../bin"
+
   while read executable; do
     basename=$(basename "$executable")
-    llvm-profdata-$llvm_version merge -sparse ""$coverage_dir"/$basename.profraw" -o "$coverage_dir"/$basename.profdata
+    ${llvm_root}/llvm-profdata merge -sparse "$coverage_dir/$basename.profraw" -o "$coverage_dir/$basename.profdata"
     mkdir -p "$coverage_dir"/reports
-    llvm-cov-$llvm_version export \
+    ${llvm_root}/llvm-cov export \
       --instr-profile "$coverage_dir"/$basename.profdata \
       --format lcov \
       "$executable" \

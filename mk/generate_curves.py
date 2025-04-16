@@ -33,21 +33,23 @@ rs_template = """
 
 use super::{
     elem::{binary_op, binary_op_assign},
-    elem_sqr_mul, elem_sqr_mul_acc, Modulus, *,
+    elem_sqr_mul, elem_sqr_mul_acc, PublicModulus, *,
 };
 
+pub(super) const NUM_LIMBS: usize = (%(bits)d + LIMB_BITS - 1) / LIMB_BITS;
+
 pub static COMMON_OPS: CommonOps = CommonOps {
-    num_limbs: (%(bits)d + LIMB_BITS - 1) / LIMB_BITS,
+    num_limbs: elem::NumLimbs::P%(bits)s,
     order_bits: %(bits)d,
 
-    q: Modulus {
+    q: PublicModulus {
         p: limbs_from_hex("%(q)x"),
-        rr: limbs_from_hex(%(q_rr)s),
+        rr: PublicElem::from_hex(%(q_rr)s),
     },
-    n: Elem::from_hex("%(n)x"),
+    n: PublicElem::from_hex("%(n)x"),
 
-    a: Elem::from_hex(%(a)s),
-    b: Elem::from_hex(%(b)s),
+    a: PublicElem::from_hex(%(a)s),
+    b: PublicElem::from_hex(%(b)s),
 
     elem_mul_mont: p%(bits)s_elem_mul_mont,
     elem_sqr_mont: p%(bits)s_elem_sqr_mont,
@@ -56,8 +58,8 @@ pub static COMMON_OPS: CommonOps = CommonOps {
 };
 
 pub(super) static GENERATOR: (Elem<R>, Elem<R>) = (
-    Elem::from_hex(%(Gx)s),
-    Elem::from_hex(%(Gy)s),
+    PublicElem::from_hex(%(Gx)s),
+    PublicElem::from_hex(%(Gy)s),
 );
 
 pub static PRIVATE_KEY_OPS: PrivateKeyOps = PrivateKeyOps {
@@ -75,13 +77,13 @@ fn p%(bits)d_elem_inv_squared(a: &Elem<R>) -> Elem<R> {
     //    %(q_minus_3)s
 
     #[inline]
-    fn sqr_mul(a: &Elem<R>, squarings: usize, b: &Elem<R>) -> Elem<R> {
-        elem_sqr_mul(&COMMON_OPS, a, squarings, b)
+    fn sqr_mul(q: &Modulus<Q>, a: &Elem<R>, squarings: LeakyWord, b: &Elem<R>) -> Elem<R> {
+        elem_sqr_mul(&COMMON_OPS, a, squarings, b, q.cpu())
     }
 
     #[inline]
-    fn sqr_mul_acc(a: &mut Elem<R>, squarings: usize, b: &Elem<R>) {
-        elem_sqr_mul_acc(&COMMON_OPS, a, squarings, b)
+    fn sqr_mul_acc(q: &Modulus<Q>, a: &mut Elem<R>, squarings: LeakyWord, b: &Elem<R>) {
+        elem_sqr_mul_acc(&COMMON_OPS, a, squarings, b, q.cpu())
     }
 
     let b_1 = &a;
@@ -93,7 +95,8 @@ fn p%(bits)d_elem_inv_squared(a: &Elem<R>) -> Elem<R> {
 
 fn p%(bits)s_point_mul_base_impl(a: &Scalar) -> Point {
     // XXX: Not efficient. TODO: Precompute multiples of the generator.
-    PRIVATE_KEY_OPS.point_mul(a, &GENERATOR)
+    let generator = (Elem::from(&GENERATOR.0), Elem::from(&GENERATOR.1));
+    PRIVATE_KEY_OPS.point_mul(a, &generator)
 }
 
 pub static PUBLIC_KEY_OPS: PublicKeyOps = PublicKeyOps {
@@ -108,11 +111,11 @@ pub static SCALAR_OPS: ScalarOps = ScalarOps {
 pub static PUBLIC_SCALAR_OPS: PublicScalarOps = PublicScalarOps {
     scalar_ops: &SCALAR_OPS,
     public_key_ops: &PUBLIC_KEY_OPS,
-    twin_mul: |g_scalar, p_scalar, p_xy| {
-        twin_mul_inefficient(&PRIVATE_KEY_OPS, g_scalar, p_scalar, p_xy)
+    twin_mul: |g_scalar, p_scalar, p_xy, cpu| {
+        twin_mul_inefficient(&PRIVATE_KEY_OPS, g_scalar, p_scalar, p_xy, cpu)
     },
 
-    q_minus_n: Elem::from_hex("%(q_minus_n)x"),
+    q_minus_n: PublicElem::from_hex("%(q_minus_n)x"),
 
     // TODO: Use an optimized variable-time implementation.
     scalar_inv_to_mont_vartime: |s| PRIVATE_SCALAR_OPS.scalar_inv_to_mont(s),
@@ -121,7 +124,7 @@ pub static PUBLIC_SCALAR_OPS: PublicScalarOps = PublicScalarOps {
 pub static PRIVATE_SCALAR_OPS: PrivateScalarOps = PrivateScalarOps {
     scalar_ops: &SCALAR_OPS,
 
-    oneRR_mod_n: Scalar::from_hex(%(oneRR_mod_n)s),
+    oneRR_mod_n: PublicScalar::from_hex(%(oneRR_mod_n)s),
     scalar_inv_to_mont: p%(bits)s_scalar_inv_to_mont,
 };
 
@@ -148,7 +151,7 @@ fn p%(bits)s_scalar_inv_to_mont(a: Scalar<R>) -> Scalar<R> {
     }
 
     // Returns (`a` squared `squarings` times) * `b`.
-    fn sqr_mul(a: &Scalar<R>, squarings: usize, b: &Scalar<R>) -> Scalar<R> {
+    fn sqr_mul(a: &Scalar<R>, squarings: LeakyWord, b: &Scalar<R>) -> Scalar<R> {
         debug_assert!(squarings >= 1);
         let mut tmp = sqr(a);
         for _ in 1..squarings {
@@ -158,7 +161,7 @@ fn p%(bits)s_scalar_inv_to_mont(a: Scalar<R>) -> Scalar<R> {
     }
 
     // Sets `acc` = (`acc` squared `squarings` times) * `b`.
-    fn sqr_mul_acc(acc: &mut Scalar<R>, squarings: usize, b: &Scalar<R>) {
+    fn sqr_mul_acc(acc: &mut Scalar<R>, squarings: LeakyWord, b: &Scalar<R>) {
         debug_assert!(squarings >= 1);
         for _ in 0..squarings {
             sqr_mut(acc);
@@ -189,7 +192,7 @@ fn p%(bits)s_scalar_inv_to_mont(a: Scalar<R>) -> Scalar<R> {
     ];
 
     for &(squarings, digit) in &REMAINING_WINDOWS[..] {
-        sqr_mul_acc(&mut acc, usize::from(squarings), &d[usize::from(digit)]);
+        sqr_mul_acc(&mut acc, LeakyWord::from(squarings), &d[usize::from(digit)]);
     }
 
     acc
