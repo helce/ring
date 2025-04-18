@@ -1,4 +1,4 @@
-// Copyright 2018-2024 Brian Smith.
+// Copyright 2018-2025 Brian Smith.
 //
 // Permission to use, copy, modify, and/or distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -14,8 +14,12 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use super::{HTable, KeyValue, UpdateBlock, UpdateBlocks, Xi, BLOCK_LEN};
-use crate::{cpu::intel, polyfill::slice::AsChunks};
+use super::{ffi::KeyValue, HTable, UpdateBlock, Xi};
+use crate::{
+    aead::gcm::ffi::BLOCK_LEN,
+    cpu::intel::{Avx2, VAesClmul},
+    polyfill::slice::AsChunks,
+};
 
 #[derive(Clone)]
 pub struct Key {
@@ -23,13 +27,9 @@ pub struct Key {
 }
 
 impl Key {
-    #[inline(never)]
-    pub(in super::super) fn new(
-        value: KeyValue,
-        _required_cpu_features: (intel::ClMul, intel::Avx, intel::Movbe),
-    ) -> Self {
+    pub(in super::super) fn new(value: KeyValue, _cpu: (Avx2, VAesClmul)) -> Self {
         Self {
-            h_table: unsafe { htable_new!(gcm_init_avx, value) },
+            h_table: unsafe { htable_new!(gcm_init_vpclmulqdq_avx2, value) },
         }
     }
 
@@ -40,12 +40,7 @@ impl Key {
 
 impl UpdateBlock for Key {
     fn update_block(&self, xi: &mut Xi, a: [u8; BLOCK_LEN]) {
-        self.update_blocks(xi, (&a).into())
-    }
-}
-
-impl UpdateBlocks for Key {
-    fn update_blocks(&self, xi: &mut Xi, input: AsChunks<u8, BLOCK_LEN>) {
-        unsafe { ghash!(gcm_ghash_avx, xi, self.inner(), input) }
+        let input: AsChunks<u8, BLOCK_LEN> = (&a).into();
+        unsafe { ghash!(gcm_ghash_vpclmulqdq_avx2_1, xi, &self.h_table, input) }
     }
 }

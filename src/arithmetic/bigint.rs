@@ -101,7 +101,7 @@ impl<M, E> Elem<M, E> {
 impl<M, E> Elem<M, E> {
     #[inline]
     pub fn is_zero(&self) -> bool {
-        limb::limbs_are_zero_constant_time(&self.limbs).leak()
+        limb::limbs_are_zero(&self.limbs).leak()
     }
 }
 
@@ -214,7 +214,7 @@ pub fn elem_reduced_once<A, M>(
 ) -> Elem<M, Unencoded> {
     assert_eq!(m.len_bits(), other_modulus_len_bits);
     r.limbs.copy_from_slice(&a.limbs);
-    limb::limbs_reduce_once_constant_time(&mut r.limbs, m.limbs())
+    limb::limbs_reduce_once(&mut r.limbs, m.limbs())
         .unwrap_or_else(unwrap_impossible_len_mismatch_error);
     Elem {
         limbs: r.limbs,
@@ -620,7 +620,7 @@ fn elem_exp_consttime_inner<N, M, const STORAGE_LIMBS: usize>(
     m: &Modulus<M>,
     other_prime_len_bits: BitLength,
 ) -> Result<Elem<M, Unencoded>, LimbSliceError> {
-    use super::x86_64_mont::{
+    use super::limbs::x86_64::mont::{
         gather5, mul_mont5, mul_mont_gather5_amm, power5_amm, scatter5, sqr_mont5,
     };
     use crate::{
